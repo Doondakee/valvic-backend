@@ -27,15 +27,32 @@ app.get('/api/categorias', async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('categorias')
-      .select('categoria')
+      .select('id_categoria, categoria, fecha_creacion')
       .order('categoria', { ascending: true });
     
     if (error) throw error;
     
+    // Devolver solo los nombres para mantener compatibilidad
     const categorias = data.map(c => c.categoria);
     res.json(categorias);
   } catch (error) {
     console.error('Error al obtener categorías:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ✅ NUEVA RUTA: Obtener categorías con ID (para edición)
+app.get('/api/categorias/completo', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('categorias')
+      .select('id_categoria, categoria, fecha_creacion')
+      .order('categoria', { ascending: true });
+    
+    if (error) throw error;
+    res.json(data);
+  } catch (error) {
+    console.error('Error al obtener categorías completas:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -85,24 +102,106 @@ app.post('/api/categorias', async (req, res) => {
   }
 });
 
-
-// Eliminar categoría
-app.delete('/api/categorias/:nombre', async (req, res) => {
+// NUEVA RUTA: Editar categoría (PUT)
+app.put('/api/categorias/:id', async (req, res) => {
   try {
-    const { nombre } = req.params;
+    const { id } = req.params;
+    const { categoria } = req.body;
     
+    if (!categoria || !categoria.trim()) {
+      return res.status(400).json({ error: 'El nombre de la categoría es obligatorio' });
+    }
+
+    const nombreTrimmed = categoria.trim();
+
+    // Verificar si la categoría existe
+    const { data: existente, error: checkError } = await supabase
+      .from('categorias')
+      .select('id_categoria, categoria')
+      .eq('id_categoria', id)
+      .single();
+
+    if (checkError || !existente) {
+      return res.status(404).json({ error: 'Categoría no encontrada' });
+    }
+
+    // Verificar si el nuevo nombre ya existe en otra categoría
+    const { data: duplicado, error: dupError } = await supabase
+      .from('categorias')
+      .select('id_categoria')
+      .ilike('categoria', nombreTrimmed)
+      .neq('id_categoria', id);
+
+    if (dupError) throw dupError;
+
+    if (duplicado && duplicado.length > 0) {
+      return res.status(400).json({ error: 'Ya existe una categoría con ese nombre' });
+    }
+
+    // Actualizar la categoría
+    const { data, error } = await supabase
+      .from('categorias')
+      .update({ 
+        categoria: nombreTrimmed,
+        fecha_creacion: new Date()
+      })
+      .eq('id_categoria', id)
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    // También actualizar los productos que usan esta categoría
+    const { error: updateError } = await supabase
+      .from('productos')
+      .update({ categoria: nombreTrimmed })
+      .eq('categoria', existente.categoria);
+
+    if (updateError) {
+      console.error('Error al actualizar productos:', updateError);
+      // No fallamos la petición, solo logueamos
+    }
+
+    res.json({ 
+      success: true, 
+      message: `Categoría actualizada exitosamente`,
+      categoria: data
+    });
+  } catch (error) {
+    console.error('Error al actualizar categoría:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// NUEVA RUTA: Eliminar categoría (DELETE) - Ya existe pero la mejoramos
+app.delete('/api/categorias/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    // Obtener el nombre de la categoría
+    const { data: categoria, error: findError } = await supabase
+      .from('categorias')
+      .select('categoria')
+      .eq('id_categoria', id)
+      .single();
+
+    if (findError || !categoria) {
+      return res.status(404).json({ error: 'Categoría no encontrada' });
+    }
+
     // Verificar si hay productos usando esta categoría
     const { data: productos, error: checkError } = await supabase
       .from('productos')
       .select('id')
-      .eq('categoria', nombre)
+      .eq('categoria', categoria.categoria)
       .limit(1);
 
     if (checkError) throw checkError;
 
     if (productos && productos.length > 0) {
       return res.status(400).json({ 
-        error: `No se puede eliminar la categoría "${nombre}" porque tiene productos asociados` 
+        error: `No se puede eliminar la categoría "${categoria.categoria}" porque tiene productos asociados`,
+        tieneProductos: true
       });
     }
 
@@ -110,13 +209,13 @@ app.delete('/api/categorias/:nombre', async (req, res) => {
     const { error } = await supabase
       .from('categorias')
       .delete()
-      .eq('categoria', nombre);
+      .eq('id_categoria', id);
 
     if (error) throw error;
 
     res.json({ 
       success: true, 
-      message: `Categoría "${nombre}" eliminada exitosamente` 
+      message: `Categoría "${categoria.categoria}" eliminada exitosamente` 
     });
   } catch (error) {
     console.error('Error al eliminar categoría:', error);
