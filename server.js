@@ -261,11 +261,23 @@ app.get('/api/productos/:id', async (req, res) => {
   }
 });
 
-
+// Crear nuevo producto
 app.post('/api/productos', async (req, res) => {
   try {
-    const { categoria, producto, contenido, precio, stock, codigo } = req.body;
+    const { 
+      categoria, 
+      producto, 
+      contenido, 
+      precio, 
+      stock, 
+      codigo,
+      vehiculo,
+      detalle,
+      precio_contado,
+      precio_colocado
+    } = req.body;
     
+    // Buscar el id_categoria basado en el nombre
     const { data: categoriaData, error: catError } = await supabase
       .from('categorias')
       .select('id_categoria')
@@ -278,16 +290,21 @@ app.post('/api/productos', async (req, res) => {
       });
     }
 
+    // Insertar nuevo producto con todos los campos
     const { data, error } = await supabase
       .from('productos')
       .insert({
-        id_categoria: categoriaData.id_categoria,  
-        categoria: categoria,                      
+        id_categoria: categoriaData.id_categoria,
+        categoria: categoria,
         producto,
-        contenido,
-        precio,
-        stock,
-        codigo,
+        contenido: contenido || '',
+        precio: precio || 0,
+        stock: stock || 0,
+        codigo: codigo || '',
+        vehiculo: vehiculo || '',
+        detalle: detalle || '',
+        precio_contado: precio_contado || 0,
+        precio_colocado: precio_colocado || 0,
         fecha_actualizacion: new Date()
       })
       .select()
@@ -305,7 +322,18 @@ app.post('/api/productos', async (req, res) => {
 app.put('/api/productos/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const { categoria, producto, contenido, precio, stock, codigo } = req.body;
+    const { 
+      categoria, 
+      producto, 
+      contenido, 
+      precio, 
+      stock, 
+      codigo,
+      vehiculo,
+      detalle,
+      precio_contado,
+      precio_colocado
+    } = req.body;
     
     let idCategoria = null;
     if (categoria) {
@@ -325,10 +353,14 @@ app.put('/api/productos/:id', async (req, res) => {
 
     const datosActualizar = {
       producto,
-      contenido,
-      precio,
-      stock,
-      codigo,
+      contenido: contenido || '',
+      precio: precio || 0,
+      stock: stock || 0,
+      codigo: codigo || '',
+      vehiculo: vehiculo || '',
+      detalle: detalle || '',
+      precio_contado: precio_contado || 0,
+      precio_colocado: precio_colocado || 0,
       fecha_actualizacion: new Date()
     };
 
@@ -358,7 +390,6 @@ app.patch('/api/productos/:id/stock', async (req, res) => {
     const { id } = req.params;
     const { cantidad } = req.body;
     
-    // Obtener producto actual
     const { data: producto, error: fetchError } = await supabase
       .from('productos')
       .select('stock')
