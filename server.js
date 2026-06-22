@@ -221,15 +221,48 @@ app.delete('/api/categorias/:id', async (req, res) => {
 // Obtener todos los productos
 app.get('/api/productos', async (req, res) => {
   try {
-    const { data, error } = await supabase
-      .from('productos')
-      .select('*')
-      .order('categoria', { ascending: true })
-      .order('producto', { ascending: true });
+    console.log('📦 Consultando productos con paginación...');
     
-    if (error) throw error;
-    res.json(data);
+    let allProducts = [];
+    let page = 0;
+    const pageSize = 1000;
+    let hasMore = true;
+    
+    while (hasMore) {
+      const from = page * pageSize;
+      const to = from + pageSize - 1;
+      
+      const { data, error } = await supabase
+        .from('productos')
+        .select('*')
+        .order('categoria', { ascending: true })
+        .order('producto', { ascending: true })
+        .range(from, to);
+      
+      if (error) {
+        console.error(`❌ Error en página ${page}:`, error);
+        throw error;
+      }
+      
+      if (data.length === 0) {
+        hasMore = false;
+      } else {
+        allProducts = allProducts.concat(data);
+        page++;
+        
+        // Si la cantidad de datos es menor que el pageSize, es la última página
+        if (data.length < pageSize) {
+          hasMore = false;
+        }
+      }
+      
+      console.log(`📄 Página ${page}: ${data.length} productos`);
+    }
+    
+    console.log(`✅ Total productos obtenidos: ${allProducts.length}`);
+    res.json(allProducts);
   } catch (error) {
+    console.error('❌ Error en GET /api/productos:', error);
     res.status(500).json({ error: error.message });
   }
 });
