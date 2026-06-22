@@ -14,7 +14,7 @@ app.use(cors({
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
   credentials: true
 }));
-app.use(express.json());
+app.use(express.json({ limit: '10mb' })); // Aumentar límite para batch
 
 // Conectar a SUPABASE
 const supabase = createClient(
@@ -23,6 +23,8 @@ const supabase = createClient(
 );
 
 // |==========| CATEGORIAS |==========|
+
+// Obtener todas las categorías
 app.get('/api/categorias', async (req, res) => {
   try {
     const { data, error } = await supabase
@@ -32,7 +34,6 @@ app.get('/api/categorias', async (req, res) => {
     
     if (error) throw error;
     
-    // Devolver solo los nombres para mantener compatibilidad
     const categorias = data.map(c => c.categoria);
     res.json(categorias);
   } catch (error) {
@@ -41,7 +42,7 @@ app.get('/api/categorias', async (req, res) => {
   }
 });
 
-// ✅ NUEVA RUTA: Obtener categorías con ID (para edición)
+// Obtener categorías con ID (para edición)
 app.get('/api/categorias/completo', async (req, res) => {
   try {
     const { data, error } = await supabase
@@ -57,6 +58,7 @@ app.get('/api/categorias/completo', async (req, res) => {
   }
 });
 
+// Crear nueva categoría
 app.post('/api/categorias', async (req, res) => {
   try {
     const { nombre } = req.body;
@@ -67,7 +69,6 @@ app.post('/api/categorias', async (req, res) => {
 
     const nombreTrimmed = nombre.trim();
 
-    // Verificar si la categoría ya existe
     const { data: existente, error: checkError } = await supabase
       .from('categorias')
       .select('id_categoria')
@@ -79,7 +80,6 @@ app.post('/api/categorias', async (req, res) => {
       return res.status(400).json({ error: 'La categoría ya existe' });
     }
 
-    // Insertar nueva categoría
     const { data, error } = await supabase
       .from('categorias')
       .insert({ categoria: nombreTrimmed })
@@ -102,7 +102,7 @@ app.post('/api/categorias', async (req, res) => {
   }
 });
 
-// NUEVA RUTA: Editar categoría (PUT)
+// Editar categoría
 app.put('/api/categorias/:id', async (req, res) => {
   try {
     const { id } = req.params;
@@ -114,7 +114,6 @@ app.put('/api/categorias/:id', async (req, res) => {
 
     const nombreTrimmed = categoria.trim();
 
-    // Verificar si la categoría existe
     const { data: existente, error: checkError } = await supabase
       .from('categorias')
       .select('id_categoria, categoria')
@@ -125,7 +124,6 @@ app.put('/api/categorias/:id', async (req, res) => {
       return res.status(404).json({ error: 'Categoría no encontrada' });
     }
 
-    // Verificar si el nuevo nombre ya existe en otra categoría
     const { data: duplicado, error: dupError } = await supabase
       .from('categorias')
       .select('id_categoria')
@@ -138,7 +136,6 @@ app.put('/api/categorias/:id', async (req, res) => {
       return res.status(400).json({ error: 'Ya existe una categoría con ese nombre' });
     }
 
-    // Actualizar la categoría
     const { data, error } = await supabase
       .from('categorias')
       .update({ 
@@ -151,7 +148,6 @@ app.put('/api/categorias/:id', async (req, res) => {
 
     if (error) throw error;
 
-    // También actualizar los productos que usan esta categoría
     const { error: updateError } = await supabase
       .from('productos')
       .update({ categoria: nombreTrimmed })
@@ -159,7 +155,6 @@ app.put('/api/categorias/:id', async (req, res) => {
 
     if (updateError) {
       console.error('Error al actualizar productos:', updateError);
-      // No fallamos la petición, solo logueamos
     }
 
     res.json({ 
@@ -173,12 +168,11 @@ app.put('/api/categorias/:id', async (req, res) => {
   }
 });
 
-// NUEVA RUTA: Eliminar categoría (DELETE) - Ya existe pero la mejoramos
+// Eliminar categoría
 app.delete('/api/categorias/:id', async (req, res) => {
   try {
     const { id } = req.params;
     
-    // Obtener el nombre de la categoría
     const { data: categoria, error: findError } = await supabase
       .from('categorias')
       .select('categoria')
@@ -189,7 +183,6 @@ app.delete('/api/categorias/:id', async (req, res) => {
       return res.status(404).json({ error: 'Categoría no encontrada' });
     }
 
-    // Verificar si hay productos usando esta categoría
     const { data: productos, error: checkError } = await supabase
       .from('productos')
       .select('id')
@@ -205,7 +198,6 @@ app.delete('/api/categorias/:id', async (req, res) => {
       });
     }
 
-    // Eliminar la categoría
     const { error } = await supabase
       .from('categorias')
       .delete()
@@ -257,6 +249,74 @@ app.get('/api/productos/:id', async (req, res) => {
     
     res.json(data);
   } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ✅ OPTIMIZACIÓN: Actualizar múltiples productos en lote (BATCH)
+app.put('/api/productos/batch', async (req, res) => {
+  try {
+    const { productos } = req.body;
+    
+    if (!productos || !Array.isArray(productos) || productos.length === 0) {
+      return res.status(400).json({ error: 'Se requiere un array de productos' });
+    }
+
+    console.log(`📦 Actualizando ${productos.length} productos en lote...`);
+    
+    // Procesar en lotes pequeños para evitar sobrecargar Supabase
+    const TAMANO_LOTE = 20;
+    const resultados = [];
+    
+    for (let i = 0; i < productos.length; i += TAMANO_LOTE) {
+      const lote = productos.slice(i, i + TAMANO_LOTE);
+      
+      // Procesar cada lote en paralelo
+      const resultadosLote = await Promise.all(
+        lote.map(async ({ id, ...datos }) => {
+          try {
+            const { data, error } = await supabase
+              .from('productos')
+              .update({
+                ...datos,
+                fecha_actualizacion: new Date()
+              })
+              .eq('id', id)
+              .select()
+              .single();
+            
+            if (error) {
+              console.error(`❌ Error actualizando producto ${id}:`, error.message);
+              return { id, success: false, error: error.message };
+            }
+            return { id, success: true, data };
+          } catch (err) {
+            return { id, success: false, error: err.message };
+          }
+        })
+      );
+      
+      resultados.push(...resultadosLote);
+    }
+
+    const exitos = resultados.filter(r => r.success);
+    const errores = resultados.filter(r => !r.success);
+
+    console.log(`✅ ${exitos.length} actualizados, ${errores.length} errores`);
+
+    if (errores.length > 0) {
+      console.warn('⚠️ Errores en batch update:', errores.map(e => `${e.id}: ${e.error}`).join(', '));
+    }
+
+    res.json({
+      success: true,
+      message: `${exitos.length} productos actualizados${errores.length > 0 ? `, ${errores.length} con errores` : ''}`,
+      exitos: exitos.length,
+      errores: errores.length > 0 ? errores : undefined
+    });
+
+  } catch (error) {
+    console.error('❌ Error en batch update:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -318,7 +378,7 @@ app.post('/api/productos', async (req, res) => {
   }
 });
 
-// Actualizar producto
+// Actualizar producto individual
 app.put('/api/productos/:id', async (req, res) => {
   try {
     const { id } = req.params;
@@ -437,6 +497,7 @@ app.delete('/api/productos/:id', async (req, res) => {
   }
 });
 
+
 // |==========| USUARIOS |==========|
 
 // Obtener todos los usuarios
@@ -470,7 +531,6 @@ app.get('/api/usuarios/pendientes', async (req, res) => {
   }
 });
 
-
 // Login de usuario
 app.post('/api/login', async (req, res) => {
   try {
@@ -487,7 +547,6 @@ app.post('/api/login', async (req, res) => {
       return res.status(401).json({ error: 'Usuario o contraseña incorrectos' });
     }
     
-    // 👈 VERIFICAR QUE ESTÉ ACTIVO
     if (!data.activo) {
       return res.status(401).json({ 
         error: 'Tu cuenta está pendiente de aprobación. Espera a que un administrador la active.' 
@@ -507,13 +566,11 @@ app.post('/api/login', async (req, res) => {
   }
 });
 
-
 // Crear nuevo usuario - SIEMPRE con activo = false (pendiente)
 app.post('/api/usuarios', async (req, res) => {
   try {
     const { nombre_usuario, contrasena, rol, nombre, apellido, email } = req.body;
     
-    // Validaciones
     if (!nombre_usuario || !contrasena) {
       return res.status(400).json({ error: 'Usuario y contraseña son obligatorios' });
     }
@@ -522,7 +579,6 @@ app.post('/api/usuarios', async (req, res) => {
       return res.status(400).json({ error: 'Email inválido' });
     }
     
-    // Verificar si el usuario ya existe
     const { data: existente, error: checkError } = await supabase
       .from('usuarios')
       .select('id')
@@ -533,7 +589,6 @@ app.post('/api/usuarios', async (req, res) => {
       return res.status(400).json({ error: 'Este nombre de usuario ya está registrado' });
     }
     
-    // Verificar si el email ya existe
     if (email) {
       const { data: emailExistente } = await supabase
         .from('usuarios')
@@ -546,7 +601,6 @@ app.post('/api/usuarios', async (req, res) => {
       }
     }
     
-    // Crear usuario con activo = false (pendiente de aprobación)
     const { data, error } = await supabase
       .from('usuarios')
       .insert({
@@ -574,15 +628,15 @@ app.post('/api/usuarios', async (req, res) => {
   }
 });
 
-// Actualizar usuario - Para activar/desactivar
+// Actualizar usuario
 app.put('/api/usuarios/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const { data, error } = await supabase
       .from('usuarios')
-      .update(req.body)  // Puede incluir activo, rol, etc.
+      .update(req.body)
       .eq('id', id)
-      .select('id, nombre_usuario, rol, activo')
+      .select('id, nombre_usuario, rol, activo, nombre, apellido, email, fecha_creacion')
       .single();
     
     if (error) throw error;
@@ -608,6 +662,7 @@ app.delete('/api/usuarios/:id', async (req, res) => {
   }
 });
 
+
 // |==========| DIAGNOSTICOS |==========|
 
 app.get('/api/test', (req, res) => {
@@ -624,12 +679,17 @@ app.get('/api/diagnostico', async (req, res) => {
       .from('usuarios')
       .select('*', { count: 'exact', head: true });
     
+    const { count: categorias, error: catError } = await supabase
+      .from('categorias')
+      .select('*', { count: 'exact', head: true });
+    
     res.json({ 
       success: true,
       supabase_conectada: true,
       estadisticas: {
         total_productos: prodError ? 0 : productos,
-        total_usuarios: userError ? 0 : usuarios
+        total_usuarios: userError ? 0 : usuarios,
+        total_categorias: catError ? 0 : categorias
       }
     });
   } catch (error) {
